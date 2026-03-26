@@ -1,0 +1,164 @@
+import { getAccounts, getTransactions, addTransaction } from './db.js';
+import { marked } from 'https://cdn.jsdelivr.net/npm/marked/lib/marked.esm.js';
+
+let conversationHistory = [
+    { role: "assistant", text: "Ciao! Sono l'assistente IA di SpeseSmart. Configura la tua API Key in Impostazioni. Puoi chiedermi di aggiungere spese o darti consigli sul budget!" }
+];
+
+export async function renderAssistantView(container) {
+    container.innerHTML = `
+        <div class="chat-container" style="display: flex; flex-direction: column; height: calc(100vh - 200px);">
+            <div id="chat-messages" style="flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 1rem;"></div>
+            
+            <form id="chat-form" style="display: flex; gap: 0.5rem; padding: 1rem; background: var(--surface-glass); border-top: 1px solid var(--ghost-border-outline);">
+                <input type="text" id="chat-input" class="input-field" style="flex: 1; margin: 0; background: var(--md-sys-color-surface);" placeholder="Scrivi un messaggio..." required autocomplete="off">
+                <button type="submit" class="fab-extended primary" style="position: static; border-radius: var(--radius-lg); height: 48px; width: 48px; padding: 0; justify-content: center; box-shadow: none;">
+                    <span class="material-symbols-outlined">send</span>
+                </button>
+            </form>
+        </div>
+    `;
+
+    // Restore history
+    const list = document.getElementById('chat-messages');
+    conversationHistory.forEach(msg => {
+        addMessageToUI(msg.role, msg.text);
+    });
+
+    document.getElementById('chat-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const input = document.getElementById('chat-input');
+        const text = input.value.trim();
+        if(!text) return;
+        
+        input.value = '';
+        conversationHistory.push({ role: 'user', text });
+        addMessageToUI('user', text);
+        
+        const typingId = 'typing-' + Date.now();
+        addMessageToUI('assistant', '...', typingId);
+        
+        const responseText = await callGeminiAPI(text);
+        
+        const typingEl = document.getElementById(typingId);
+        if(typingEl) typingEl.remove();
+        
+        conversationHistory.push({ role: 'assistant', text: responseText });
+        addMessageToUI('assistant', responseText);
+    });
+}
+
+function addMessageToUI(role, text, id = null) {
+    const list = document.getElementById('chat-messages');
+    if(!list) return;
+
+    const div = document.createElement('div');
+    if (id) div.id = id;
+    const isUser = role === 'user';
+    
+    div.style.display = 'flex';
+    div.style.flexDirection = 'column';
+    div.style.alignItems = isUser ? 'flex-end' : 'flex-start';
+    
+    const bg = isUser ? 'var(--md-sys-color-primary)' : 'var(--md-sys-color-surface-container-high)';
+    const color = isUser ? 'var(--md-sys-color-on-primary)' : 'var(--md-sys-color-on-surface)';
+    const radii = isUser ? 'var(--radius-lg) 0 var(--radius-lg) var(--radius-lg)' : '0 var(--radius-lg) var(--radius-lg) var(--radius-lg)';
+    
+    const content = isUser ? `<span>${text}</span>` : `<div class="markdown-body">${marked.parse(text)}</div>`;
+    
+    div.innerHTML = `
+        <div style="background: ${bg}; color: ${color}; padding: 0.8rem 1.2rem; border-radius: ${radii}; max-width: 85%;">
+            <div class="body-md" style="${isUser ? 'white-space: pre-wrap;' : ''}">${content}</div>
+        </div>
+    `;
+    list.appendChild(div);
+    list.scrollTop = list.scrollHeight;
+}
+
+async function callGeminiAPI(userText) {
+    const apiKey = localStorage.getItem('GEMINI_API_KEY');
+    if(!apiKey) {
+        return "⚠️ Configura la API Key di Gemini nella sezione Impostazioni per potermi utilizzare!";
+    }
+
+    const ctx = {
+        accounts: getAccounts(),
+        recent: getTransactions().slice(0, 5),
+        today: new Date().toISOString().split('T')[0]
+    };
+
+    const sysPrompt = `Sei l'assistente finanziario di SpeseSmart.
+Dati correnti: ${JSON.stringify(ctx)}.
+Rispondi in italiano. Sii amichevole e MOLTO conciso.
+
+REGOLE AGGIUNTA TRANSAZIONE:
+1. Se l'utente ti chiede di registrare una spesa/entrata, devi identificare il CONTO (account_id).
+2. Se l'utente NON specifica il conto nel messaggio, NON generare il blocco JSON. Chiedi invece: "Con quale conto vuoi registrare questa operazione?" e elenca i conti disponibili: ${ctx.accounts.map(a => a.name).join(', ')}.
+3. Se il conto è chiaro, descrivi l'operazione e INCLUDI il blocco JSON ESATTO:
+\`\`\`json
+{
+  "action": "ADD_TRANSACTION",
+  "data": { "date": "YYYY-MM-DD", "description": "...", "tag": "...", "account_id": 1, "amount": 0.00, "type": "expense" }
+}
+\`\`\`
+`;
+
+    const payload = {
+        systemInstruction: { parts: [{ text: sysPrompt }] },
+        contents: conversationHistory
+            .filter(msg => !msg.text.includes("⚠️") && !msg.text.includes("*(Transazione")) // Skip errors/confirmations
+            .map(msg => ({
+                role: msg.role === 'user' ? 'user' : 'model',
+                parts: [{ text: msg.text }]
+            })),
+        generationConfig: { temperature: 0.4 }
+    };
+
+    try {
+        const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=" + apiKey, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        
+        if (res.status === 429 || (data.error && data.error.message.includes('quota'))) {
+            return "⚠️ **Quota Esausta**: Hai superato il limite di messaggi gratuiti di Gemini per questo minuto/ora. Attendi un momento (circa 60 secondi) e riprova! \n\n*Puoi monitorare l'uso su ai.google.dev*";
+        }
+        
+        if(data.error) return "Errore API: " + data.error.message;
+
+        const reply = data.candidates[0].content.parts[0].text;
+        
+        // History management is now handled in the submit listener
+        if (conversationHistory.length > 12) {
+            // Keep welcome + last 11 (to keep some turns)
+            conversationHistory = [conversationHistory[0], ...conversationHistory.slice(-11)];
+        }
+        
+        return parseActions(reply);
+
+    } catch(e) {
+        console.error(e);
+        return "Errore di connessione.";
+    }
+}
+
+function parseActions(text) {
+    const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/);
+    if(jsonMatch) {
+        try {
+            const actionInfo = JSON.parse(jsonMatch[1]);
+            if(actionInfo.action === 'ADD_TRANSACTION') {
+                addTransaction(actionInfo.data);
+                if(window.refreshApp) window.refreshApp();
+                let friendlyText = text.replace(jsonMatch[0], '').trim();
+                return friendlyText + "\n\n*(Transazione registrata con successo)* ✅";
+            }
+        } catch(e) {
+            console.error("JSON parse error from Gemini", e);
+        }
+    }
+    return text;
+}

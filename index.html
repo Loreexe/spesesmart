@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="SpeseSmart - Personal Expense Management">
+    <title>SpeseSmart</title>
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto+Flex:opsz,wght@8..144,300..800&display=swap" rel="stylesheet">
+    <!-- Material Symbols Outlined -->
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" rel="stylesheet" />
+    
+    <!-- Styles -->
+    <link rel="stylesheet" href="styles/theme.css">
+    <link rel="stylesheet" href="styles/layout.css">
+    <link rel="stylesheet" href="styles/components.css">
+
+    <!-- External Libs -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="system-theme">
+    <div class="app-container">
+        <!-- Navigation (Sidebar on Desktop, Bottom on Mobile) -->
+        <nav class="bottom-nav">
+            <button class="nav-item active" data-view="dashboard">
+                <div class="nav-indicator"><span class="material-symbols-outlined">home</span></div>
+                <span class="label-sm">Home</span>
+            </button>
+            <button class="nav-item" data-view="transactions">
+                <div class="nav-indicator"><span class="material-symbols-outlined">list_alt</span></div>
+                <span class="label-sm">Spese</span>
+            </button>
+            <button class="nav-item" data-view="reports">
+                <div class="nav-indicator"><span class="material-symbols-outlined">bar_chart</span></div>
+                <span class="label-sm">Report</span>
+            </button>
+            <button class="nav-item" data-view="assistant">
+                <div class="nav-indicator"><span class="material-symbols-outlined">smart_toy</span></div>
+                <span class="label-sm">Assistente</span>
+            </button>
+            <button class="nav-item" data-view="settings">
+                <div class="nav-indicator"><span class="material-symbols-outlined">settings</span></div>
+                <span class="label-sm">Impostazioni</span>
+            </button>
+        </nav>
+
+        <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative;">
+            <!-- Top App Bar -->
+            <header class="top-app-bar" id="top-bar">
+                <h1 class="headline-sm" id="view-title">Dashboard</h1>
+                <div class="top-bar-actions">
+                    <button class="icon-button" aria-label="Notifiche" id="btn-notifications">
+                        <span class="material-symbols-outlined">notifications</span>
+                    </button>
+                    <button class="account-avatar" aria-label="Profilo" id="btn-profile">
+                        A
+                    </button>
+                </div>
+            </header>
+
+            <!-- Main Content Area -->
+            <main class="main-content" id="main-content">
+                <div class="placeholder-view">Caricamento...</div>
+            </main>
+
+            <!-- Extended Add Button -->
+            <button class="fab-extended primary" id="btn-add-transaction">
+                <span class="material-symbols-outlined">add</span>
+                <span class="label-large">Aggiungi spesa</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="db.js" type="module"></script>
+    <script src="gemini.js" type="module"></script>
+    <script src="charts.js" type="module"></script>
+    <script src="reports.js" type="module"></script>
+    <!-- Component scripts -->
+    <script src="components/transaction-sheet.js" type="module"></script>
+    <!-- Main App State -->
+    <script src="app.js" type="module"></script>
+</body>
+</html>
