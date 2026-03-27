@@ -54,6 +54,7 @@ function createTables() {
             notes TEXT DEFAULT '',
             receipt_image TEXT DEFAULT NULL,
             is_imported INTEGER DEFAULT 0,
+            processed INTEGER DEFAULT 1,
             created_at TEXT DEFAULT (datetime('now', 'localtime'))
         );
         
@@ -107,8 +108,9 @@ function migrateSchema() {
         db.run("ALTER TABLE transactions ADD COLUMN is_imported INTEGER DEFAULT 0");
     } catch (e) { /* column likely exists */ }
     
-    // Add recurring_transactions table if it missed createTables for some reason
-    // (though createTables should have handled it)
+    try {
+        db.run("ALTER TABLE transactions ADD COLUMN processed INTEGER DEFAULT 1");
+    } catch (e) { /* column likely exists */ }
 }
 
 function loadFromIndexedDB() {
@@ -266,7 +268,19 @@ export function getTransactions(filters = {}) {
         sql += " WHERE " + conditions.join(" AND ");
     }
     
-    // Let SQL do basic sort, but we enforce strict JS date parsing to handle potentially malformed CSV dates
+    // Default visibility: Today or earlier, OR within next 5 days
+    const today = new Date().toISOString().split('T')[0];
+    const fiveDaysFuture = new Date();
+    fiveDaysFuture.setDate(fiveDaysFuture.getDate() + 5);
+    const fiveDaysFutureStr = fiveDaysFuture.toISOString().split('T')[0];
+    
+    // Add visibility constraint if not already filtering by date
+    if (!filters.dateFrom && !filters.dateTo) {
+        sql += (conditions.length > 0 ? " AND " : " WHERE ") + "t.date <= ?";
+        params.push(fiveDaysFutureStr);
+    }
+
+    // Let SQL do basic sort...
     const sortBy = filters.sortBy || "date";
     const sortOrder = filters.sortOrder || "DESC";
     sql += ` ORDER BY t.${sortBy} ${sortOrder}, t.id DESC`;
@@ -293,20 +307,46 @@ export function getTransactions(filters = {}) {
 }
 
 export async function addTransaction(t) {
-    // start transaction logic manually since we are managing account balance
+    const today = new Date().toISOString().split('T')[0];
+    const isFuture = t.date > today;
+    const processed = isFuture ? 0 : 1;
+
     db.run(
-        "INSERT INTO transactions (date, description, tag, account_id, amount, type, notes, receipt_image) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [t.date, t.description, t.tag, t.account_id, t.amount, t.type, t.notes || '', t.receipt_image || null]
+        "INSERT INTO transactions (date, description, tag, account_id, amount, type, notes, receipt_image, processed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [t.date, t.description, t.tag, t.account_id, t.amount, t.type, t.notes || '', t.receipt_image || null, processed]
     );
 
-    // Auto-update account balance
-    const acc = getAccountById(t.account_id);
-    if (acc) {
-        const diff = t.type === 'income' ? t.amount : -t.amount;
-        await updateAccountBalance(t.account_id, acc.balance + diff);
+    // Auto-update account balance ONLY if processed
+    if (processed === 1) {
+        const acc = getAccountById(t.account_id);
+        if (acc) {
+            const diff = t.type === 'income' ? t.amount : -t.amount;
+            await updateAccountBalance(t.account_id, acc.balance + diff);
+        } else {
+            await saveDB();
+        }
     } else {
         await saveDB();
     }
+}
+
+export async function processPendingTransactions() {
+    const today = new Date().toISOString().split('T')[0];
+    const pending = execQuery("SELECT * FROM transactions WHERE processed = 0 AND date <= ?", [today]);
+    
+    if (pending.length === 0) return;
+
+    for (const t of pending) {
+        const acc = getAccountById(t.account_id);
+        if (acc) {
+            const diff = t.type === 'income' ? t.amount : -t.amount;
+            db.run("UPDATE accounts SET balance = balance + ? WHERE id = ?", [diff, t.account_id]);
+        }
+        db.run("UPDATE transactions SET processed = 1 WHERE id = ?", [t.id]);
+    }
+    
+    await saveDB();
+    console.log(`Processed ${pending.length} pending scheduled transactions.`);
 }
 
 export async function deleteTransaction(id) {
@@ -316,11 +356,15 @@ export async function deleteTransaction(id) {
 
     db.run("DELETE FROM transactions WHERE id = ?", [id]);
 
-    // Reverse account balance update
-    const acc = getAccountById(t.account_id);
-    if (acc) {
-        const diff = t.type === 'income' ? -t.amount : t.amount;
-        await updateAccountBalance(t.account_id, acc.balance + diff);
+    // Reverse account balance update ONLY if it was processed
+    if (t.processed === 1) {
+        const acc = getAccountById(t.account_id);
+        if (acc) {
+            const diff = t.type === 'income' ? -t.amount : t.amount;
+            await updateAccountBalance(t.account_id, acc.balance + diff);
+        } else {
+            await saveDB();
+        }
     } else {
         await saveDB();
     }
@@ -331,24 +375,34 @@ export async function updateTransaction(id, t) {
     if (!res.length) return;
     const oldTx = res[0];
 
+    const today = new Date().toISOString().split('T')[0];
+    const isFuture = t.date > today;
+    const newProcessed = isFuture ? 0 : 1;
+
     db.run(
-        "UPDATE transactions SET date = ?, description = ?, tag = ?, account_id = ?, amount = ?, type = ?, notes = ?, receipt_image = ? WHERE id = ?",
-        [t.date, t.description, t.tag, t.account_id, t.amount, t.type, t.notes || '', t.receipt_image || oldTx.receipt_image, id]
+        "UPDATE transactions SET date = ?, description = ?, tag = ?, account_id = ?, amount = ?, type = ?, notes = ?, receipt_image = ?, processed = ? WHERE id = ?",
+        [t.date, t.description, t.tag, t.account_id, t.amount, t.type, t.notes || '', t.receipt_image || oldTx.receipt_image, newProcessed, id]
     );
 
     // Reconcile balance
-    // Revert old transaction
-    const oldAcc = getAccountById(oldTx.account_id);
-    if (oldAcc) {
-        const diff = oldTx.type === 'income' ? -oldTx.amount : oldTx.amount;
-        await updateAccountBalance(oldTx.account_id, oldAcc.balance + diff);
+    // 1. Revert old transaction if it was processed
+    if (oldTx.processed === 1) {
+        const oldAcc = getAccountById(oldTx.account_id);
+        if (oldAcc) {
+            const diff = oldTx.type === 'income' ? -oldTx.amount : oldTx.amount;
+            await updateAccountBalance(oldTx.account_id, oldAcc.balance + diff);
+        }
     }
 
-    // Apply new transaction
-    const newAcc = getAccountById(t.account_id);
-    if (newAcc) {
-        const diff = t.type === 'income' ? t.amount : -t.amount;
-        await updateAccountBalance(t.account_id, newAcc.balance + diff);
+    // 2. Apply new transaction if it is now processed
+    if (newProcessed === 1) {
+        const newAcc = getAccountById(t.account_id);
+        if (newAcc) {
+            const diff = t.type === 'income' ? t.amount : -t.amount;
+            await updateAccountBalance(t.account_id, newAcc.balance + diff);
+        } else {
+            await saveDB();
+        }
     } else {
         await saveDB();
     }

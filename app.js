@@ -1,4 +1,4 @@
-import { initDatabase, getAccounts, getTransactions, addAccount, addRecurringTransaction, getRecurringTransactions, addTransaction, deleteAccount, getAccountById, updateAccount, importFromCSV, setLocalFileHandle } from './db.js';
+import { initDatabase, getAccounts, getTransactions, addAccount, addRecurringTransaction, getRecurringTransactions, addTransaction, deleteAccount, getAccountById, updateAccount, importFromCSV, setLocalFileHandle, processPendingTransactions } from './db.js';
 import { renderAccountCard } from './components/account-card.js';
 import { initTransactionSheet } from './components/transaction-sheet.js';
 import { renderReportsView } from './reports.js';
@@ -260,7 +260,10 @@ export function renderTransactionRow(tx) {
                     <span class="material-symbols-outlined">${icon}</span>
                 </div>
                 <div>
-                    <div class="title-md">${tx.description}</div>
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <div class="title-md">${tx.description}</div>
+                        ${tx.date > new Date().toISOString().split('T')[0] ? '<span class="label-sm" style="background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); padding: 2px 6px; border-radius: 4px;">Programmata</span>' : ''}
+                    </div>
                     <div class="body-md" style="color: var(--md-sys-color-on-surface-variant)">${tx.date} • ${tx.account_name} &nbsp; <span class="label-sm">${tx.tag}</span></div>
                 </div>
             </div>
@@ -585,6 +588,7 @@ window.refreshApp = () => {
 
 export async function init() {
     await initDatabase();
+    await processPendingTransactions();
     setupNavigation();
     initTransactionSheet();
     loadView('dashboard');

@@ -48,8 +48,10 @@ function updateBudgetSummary() {
     const now = new Date();
     
     // YYYY-MM-01
+    const today = new Date().toISOString().split('T')[0];
     let monthStart = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
-    const txs = getTransactions().filter(t => t.date >= monthStart && t.type !== 'transfer' && t.is_imported !== 1);
+    // Only count processed transactions for current budget stats
+    const txs = getTransactions().filter(t => t.date >= monthStart && t.date <= today && t.type !== 'transfer' && t.is_imported !== 1);
     
     const spent = txs.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
     const incomeThisMonth = txs.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);

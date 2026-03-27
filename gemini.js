@@ -1,4 +1,4 @@
-import { getAccounts, getTransactions, addTransaction } from './db.js';
+import { getAccounts, getTransactions, addTransaction, addRecurringTransaction } from './db.js';
 import { marked } from 'https://cdn.jsdelivr.net/npm/marked/lib/marked.esm.js';
 
 let conversationHistory = [
@@ -92,15 +92,29 @@ Dati correnti: ${JSON.stringify(ctx)}.
 Rispondi in italiano. Sii amichevole e MOLTO conciso.
 
 REGOLE AGGIUNTA TRANSAZIONE:
-1. Se l'utente ti chiede di registrare una spesa/entrata, devi identificare il CONTO (account_id).
-2. Se l'utente NON specifica il conto nel messaggio, NON generare il blocco JSON. Chiedi invece: "Con quale conto vuoi registrare questa operazione?" e elenca i conti disponibili: ${ctx.accounts.map(a => a.name).join(', ')}.
-3. Se il conto è chiaro, descrivi l'operazione e INCLUDI il blocco JSON ESATTO:
+1. Se l'utente chiede di registrare una spesa/entrata SINGOLA (anche nel futuro), usa ADD_TRANSACTION.
+2. Se l'utente usa parole come "ogni mese", "tutti i lunedì", "mensilmente", "in automatico ogni...", usa ADD_RECURRING_TRANSACTION.
+3. Se l'utente NON specifica il conto, chiedi: "Con quale conto vuoi registrare questa operazione?" elencando i conti: ${ctx.accounts.map(a => a.name).join(', ')}.
+4. Includi il blocco JSON ESATTO:
+
+Per transazioni singole:
 \`\`\`json
 {
   "action": "ADD_TRANSACTION",
   "data": { "date": "YYYY-MM-DD", "description": "...", "tag": "...", "account_id": 1, "amount": 0.00, "type": "expense" }
 }
 \`\`\`
+
+Per automazioni ricorrenti:
+\`\`\`json
+{
+  "action": "ADD_RECURRING_TRANSACTION",
+  "data": { "description": "...", "amount": 0.00, "type": "expense|income|transfer", "frequency": "monthly|weekly|daily", "next_date": "YYYY-MM-DD", "account_id": 1, "to_account_id": null }
+}
+\`\`\`
+
+NOTA: Per i trasferimenti verso fondi risparmio, usa type: "transfer" e specifica to_account_id.
+
 `;
 
     const payload = {
@@ -167,6 +181,12 @@ function parseActions(text) {
                 if(window.refreshApp) window.refreshApp();
                 let friendlyText = text.replace(jsonMatch[0], '').trim();
                 return friendlyText + "\n\n*(Transazione registrata con successo)* ✅";
+            }
+            if(actionInfo.action === 'ADD_RECURRING_TRANSACTION') {
+                addRecurringTransaction(actionInfo.data);
+                if(window.refreshApp) window.refreshApp();
+                let friendlyText = text.replace(jsonMatch[0], '').trim();
+                return friendlyText + "\n\n*(Automazione registrata con successo)* ⚙️";
             }
         } catch(e) {
             console.error("JSON parse error from Gemini", e);
