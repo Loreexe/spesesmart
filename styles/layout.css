@@ -22,6 +22,12 @@ body {
     overflow-x: hidden;
 }
 
+/* Force dark mode dropdowns for selects across OS */
+select option {
+    background-color: var(--md-sys-color-surface-container-high);
+    color: var(--md-sys-color-on-surface);
+}
+
 .app-container {
     display: flex;
     flex-direction: column;

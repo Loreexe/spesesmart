@@ -53,6 +53,7 @@ function createTables() {
             type TEXT NOT NULL,
             notes TEXT DEFAULT '',
             receipt_image TEXT DEFAULT NULL,
+            is_imported INTEGER DEFAULT 0,
             created_at TEXT DEFAULT (datetime('now', 'localtime'))
         );
         
@@ -100,6 +101,10 @@ function migrateSchema() {
     
     try {
         db.run("ALTER TABLE accounts ADD COLUMN goal_deadline TEXT DEFAULT NULL");
+    } catch (e) { /* column likely exists */ }
+    
+    try {
+        db.run("ALTER TABLE transactions ADD COLUMN is_imported INTEGER DEFAULT 0");
     } catch (e) { /* column likely exists */ }
     
     // Add recurring_transactions table if it missed createTables for some reason
@@ -261,12 +266,30 @@ export function getTransactions(filters = {}) {
         sql += " WHERE " + conditions.join(" AND ");
     }
     
-    // Sort logic
+    // Let SQL do basic sort, but we enforce strict JS date parsing to handle potentially malformed CSV dates
     const sortBy = filters.sortBy || "date";
     const sortOrder = filters.sortOrder || "DESC";
     sql += ` ORDER BY t.${sortBy} ${sortOrder}, t.id DESC`;
 
-    return execQuery(sql, params);
+    let results = execQuery(sql, params);
+    
+    // Strict chronological sort
+    results.sort((a, b) => {
+        const parseDate = (dStr) => {
+            if (!dStr) return 0;
+            if (dStr.includes('/')) {
+                const p = dStr.split('/');
+                if (p.length === 3 && p[2].length === 4) return new Date(`${p[2]}-${p[1]}-${p[0]}`).getTime();
+            }
+            return new Date(dStr).getTime();
+        };
+        const timeA = parseDate(a.date);
+        const timeB = parseDate(b.date);
+        if (timeA === timeB) return b.id - a.id;
+        return sortOrder === 'ASC' ? timeA - timeB : timeB - timeA;
+    });
+    
+    return results;
 }
 
 export async function addTransaction(t) {
@@ -298,6 +321,34 @@ export async function deleteTransaction(id) {
     if (acc) {
         const diff = t.type === 'income' ? -t.amount : t.amount;
         await updateAccountBalance(t.account_id, acc.balance + diff);
+    } else {
+        await saveDB();
+    }
+}
+
+export async function updateTransaction(id, t) {
+    const res = execQuery("SELECT * FROM transactions WHERE id = ?", [id]);
+    if (!res.length) return;
+    const oldTx = res[0];
+
+    db.run(
+        "UPDATE transactions SET date = ?, description = ?, tag = ?, account_id = ?, amount = ?, type = ?, notes = ?, receipt_image = ? WHERE id = ?",
+        [t.date, t.description, t.tag, t.account_id, t.amount, t.type, t.notes || '', t.receipt_image || oldTx.receipt_image, id]
+    );
+
+    // Reconcile balance
+    // Revert old transaction
+    const oldAcc = getAccountById(oldTx.account_id);
+    if (oldAcc) {
+        const diff = oldTx.type === 'income' ? -oldTx.amount : oldTx.amount;
+        await updateAccountBalance(oldTx.account_id, oldAcc.balance + diff);
+    }
+
+    // Apply new transaction
+    const newAcc = getAccountById(t.account_id);
+    if (newAcc) {
+        const diff = t.type === 'income' ? t.amount : -t.amount;
+        await updateAccountBalance(t.account_id, newAcc.balance + diff);
     } else {
         await saveDB();
     }
@@ -406,7 +457,7 @@ export async function importFromCSV(csvText) {
         }
 
         db.run(
-            "INSERT INTO transactions (date, description, tag, account_id, amount, type, notes) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO transactions (date, description, tag, account_id, amount, type, notes, is_imported) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
             [date, desc, tag, acc.id, parseFloat(amount), type, notes || '']
         );
     }

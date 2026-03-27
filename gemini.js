@@ -114,35 +114,47 @@ REGOLE AGGIUNTA TRANSAZIONE:
         generationConfig: { temperature: 0.4 }
     };
 
-    try {
-        const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=" + apiKey, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
+    const models = ['gemini-flash-latest', 'gemini-1.5-flash-8b', 'gemini-2.0-flash'];
+    let lastError = null;
 
-        const data = await res.json();
-        
-        if (res.status === 429 || (data.error && data.error.message.includes('quota'))) {
-            return "⚠️ **Quota Esausta**: Hai superato il limite di messaggi gratuiti di Gemini per questo minuto/ora. Attendi un momento (circa 60 secondi) e riprova! \n\n*Puoi monitorare l'uso su ai.google.dev*";
+    for (const model of models) {
+        try {
+            const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const data = await res.json();
+            
+            if (res.status === 429 || res.status === 503 || res.status === 404 || (data.error && data.error.message.toLowerCase().includes('quota'))) {
+                lastError = "Quota/Traffico/NonTrovato";
+                continue; // Try next model
+            }
+            
+            if(data.error) return "Errore API (" + model + "): " + data.error.message;
+
+            const reply = data.candidates[0].content.parts[0].text;
+            
+            // History management
+            if (conversationHistory.length > 12) {
+                conversationHistory = [conversationHistory[0], ...conversationHistory.slice(-11)];
+            }
+            
+            return parseActions(reply);
+
+        } catch(e) {
+            console.error(`Errore di connessione con il modello ${model}:`, e);
+            lastError = "Network";
+            continue;
         }
-        
-        if(data.error) return "Errore API: " + data.error.message;
-
-        const reply = data.candidates[0].content.parts[0].text;
-        
-        // History management is now handled in the submit listener
-        if (conversationHistory.length > 12) {
-            // Keep welcome + last 11 (to keep some turns)
-            conversationHistory = [conversationHistory[0], ...conversationHistory.slice(-11)];
-        }
-        
-        return parseActions(reply);
-
-    } catch(e) {
-        console.error(e);
-        return "Errore di connessione.";
     }
+    
+    if (lastError === "Quota/Traffico/NonTrovato") {
+        return "⚠️ **Traffico elevato**: I server gratuiti di Gemini sono saturi o i modelli di fallback non sono supportati. Attendi 60 secondi e riprova.";
+    }
+    
+    return "Errore di connessione a Gemini dopo vari tentativi.";
 }
 
 function parseActions(text) {

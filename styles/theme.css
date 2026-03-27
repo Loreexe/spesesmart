@@ -1,5 +1,6 @@
 /* theme.css */
 :root, .light-theme {
+    color-scheme: light;
     /* M3 Tokens from "The Tonal Ledger" Design System */
     --md-sys-color-background: #f8faf2;
     --md-sys-color-error: #a73b21;
@@ -86,6 +87,7 @@
 }
 
 .dark-theme {
+    color-scheme: dark;
     --md-sys-color-background: #0f150e;
     --md-sys-color-on-background: #e1e4db;
     --md-sys-color-surface: #0f150e;
@@ -127,6 +129,7 @@
 
 @media (prefers-color-scheme: dark) {
     .system-theme {
+        color-scheme: dark;
         --md-sys-color-background: #0f150e;
         --md-sys-color-on-background: #e1e4db;
         --md-sys-color-surface: #0f150e;

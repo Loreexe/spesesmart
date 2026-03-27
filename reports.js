@@ -46,15 +46,17 @@ function updateBudgetSummary() {
     if(!el) return;
     
     const now = new Date();
-    // Default mock until settings page exists
-    const budget = getBudget(now.getFullYear(), now.getMonth() + 1);
-    const budgetTotal = budget ? (budget.budget_amount + budget.carried_over_from_previous) : 1500;
     
     // YYYY-MM-01
     let monthStart = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
-    const txs = getTransactions().filter(t => t.date >= monthStart && t.type === 'expense');
+    const txs = getTransactions().filter(t => t.date >= monthStart && t.type !== 'transfer' && t.is_imported !== 1);
     
-    const spent = txs.reduce((sum, t) => sum + t.amount, 0);
+    const spent = txs.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
+    const incomeThisMonth = txs.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
+
+    const manualSalary = localStorage.getItem('SPESE_SMART_MANUAL_SALARY');
+    const budgetTotal = manualSalary ? parseFloat(manualSalary) : incomeThisMonth;
+
     const available = budgetTotal - spent;
     
     el.innerHTML = `
@@ -62,12 +64,34 @@ function updateBudgetSummary() {
             <div>
                 <h3 class="title-md" style="color:var(--md-sys-color-on-primary-container);">Budget Disponibile</h3>
                 <div class="display-lg">€${available.toFixed(2)}</div>
+                <div class="label-medium" style="color:var(--md-sys-color-on-surface-variant); margin-top:4px;">
+                    Basato su: ${manualSalary ? 'Stipendio Fisso' : 'Entrate Mese Corente'}
+                </div>
             </div>
-            <div class="label-large">su €${budgetTotal.toFixed(2)}</div>
+            <div style="text-align: right;">
+                <div class="label-large">su €${budgetTotal.toFixed(2)}</div>
+                <button id="btn-set-salary" class="btn-text" style="padding: 4px 8px; font-size: 11px; margin-top: 8px; border: 1px solid currentColor; border-radius: 8px;">Imposta Stipendio</button>
+            </div>
         </div>
         
         <div class="spending-pulse" style="margin-top: 1rem; background: rgba(255,255,255,0.2);">
-            <div class="spending-pulse-fill" style="width: ${Math.min((spent / budgetTotal)*100, 100)}%; background: #fff;"></div>
+            <div class="spending-pulse-fill" style="width: ${budgetTotal > 0 ? Math.min((spent / budgetTotal)*100, 100) : 0}%; background: #fff;"></div>
         </div>
     `;
+
+    document.getElementById('btn-set-salary').addEventListener('click', () => {
+        const val = prompt("Inserisci il tuo stipendio base (lascia vuoto per il calcolo automatico tramite entrate mensili):", manualSalary || "");
+        if (val === null) return;
+        if (val.trim() === "") {
+            localStorage.removeItem('SPESE_SMART_MANUAL_SALARY');
+        } else {
+            const num = parseFloat(val);
+            if (!isNaN(num) && num > 0) {
+                localStorage.setItem('SPESE_SMART_MANUAL_SALARY', num);
+            } else {
+                alert("Importo non valido.");
+            }
+        }
+        updateBudgetSummary();
+    });
 }

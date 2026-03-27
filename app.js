@@ -90,8 +90,11 @@ async function renderDashboard() {
     // 2. Conti Correnti Section
     const accSection = document.createElement('section');
     accSection.innerHTML = `
-        <div class="section-header" style="margin-top: 1rem;">
+        <div class="section-header" style="margin-top: 1rem; display: flex; justify-content: space-between; align-items: center;">
             <h2 class="headline-sm">I tuoi conti</h2>
+            <button class="icon-button" style="background: var(--md-sys-color-surface-container-highest);" id="btn-add-account">
+                <span class="material-symbols-outlined">add</span>
+            </button>
         </div>
         <div class="accounts-grid">
             ${standardAccs.map(a => renderAccountCard(a)).join('')}
@@ -102,11 +105,16 @@ async function renderDashboard() {
     const goalSection = document.createElement('section');
     goalSection.style.marginTop = '1.5rem';
     goalSection.innerHTML = `
-        <div class="section-header">
+        <div class="section-header" style="display: flex; justify-content: space-between; align-items: center;">
             <h2 class="headline-sm">Salvadanaio e Fondi</h2>
-            <button class="icon-button" style="background: var(--md-sys-color-surface-container-highest);" id="btn-settings-goals">
-                <span class="material-symbols-outlined">settings</span>
-            </button>
+            <div>
+                <button class="icon-button" style="background: var(--md-sys-color-surface-container-highest); margin-right: 8px;" id="btn-add-fund">
+                    <span class="material-symbols-outlined">add</span>
+                </button>
+                <button class="icon-button" style="background: var(--md-sys-color-surface-container-highest);" id="btn-settings-goals">
+                    <span class="material-symbols-outlined">settings</span>
+                </button>
+            </div>
         </div>
         <div class="accounts-grid">
             ${goalAccs.map(g => renderAccountCard(g)).join('')}
@@ -135,8 +143,14 @@ async function renderDashboard() {
     DOM.mainContent.appendChild(txSection);
 
     // Click Handlers
+    const addAccBtn = accSection.querySelector('#btn-add-account');
+    if (addAccBtn) addAccBtn.onclick = () => openAccountModal(null, 'account');
+    
     const settingsBtn = goalSection.querySelector('#btn-settings-goals');
     if (settingsBtn) settingsBtn.onclick = () => loadView('recurring');
+
+    const addFundBtn = goalSection.querySelector('#btn-add-fund');
+    if (addFundBtn) addFundBtn.onclick = () => openAccountModal(null, 'savings_fund');
 }
 
 async function renderTransactions() {
@@ -148,15 +162,22 @@ async function renderTransactions() {
                 <p class="body-md" style="color: var(--md-sys-color-on-surface-variant)">Cerca e filtra le tue spese passate</p>
             </div>
         </div>
-        <div class="filled-card" style="margin-bottom: 1rem; padding: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+        <div class="filled-card" style="margin-bottom: 1rem; padding: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
             <input type="text" id="filter-text" class="input-field" placeholder="Cerca descrizione o tag..." style="flex: 1; min-width: 150px;">
             <select id="filter-type" class="input-field" style="min-width: 120px;">
-                <option value="all">Tutte</option>
                 <option value="expense">Spese</option>
                 <option value="income">Entrate</option>
             </select>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <label class="label-sm">Dal:</label>
+                <input type="date" id="filter-date-from" class="input-field" style="max-width: 140px;">
+            </div>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <label class="label-sm">Al:</label>
+                <input type="date" id="filter-date-to" class="input-field" style="max-width: 140px;">
+            </div>
         </div>
-        <div id="tx-results" class="tx-list" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
+        <div id="tx-results" class="tx-list" style="display: flex; flex-direction: column; gap: 1rem;"></div>
     `;
     DOM.mainContent.appendChild(txSection);
 
@@ -165,13 +186,43 @@ async function renderTransactions() {
     function applyFilters() {
         const text = document.getElementById('filter-text').value.toLowerCase();
         const type = document.getElementById('filter-type').value;
+        const dateFrom = document.getElementById('filter-date-from').value;
+        const dateTo = document.getElementById('filter-date-to').value;
 
-        const allTxs = getTransactions({ type });
+        const allTxs = getTransactions({ type, dateFrom: dateFrom || null, dateTo: dateTo || null });
         const filtered = allTxs.filter(t => t.description.toLowerCase().includes(text) || t.tag.toLowerCase().includes(text));
 
-        let txHtml = filtered.map(t => renderTransactionRow(t)).join('');
         if (filtered.length === 0) {
-            txHtml = '<div class="filled-card"><p class="body-md">Nessuna transazione trovata.</p></div>';
+            resultsContainer.innerHTML = '<div class="filled-card"><p class="body-md">Nessuna transazione trovata.</p></div>';
+            return;
+        }
+
+        // Group by Month-Year
+        const grouped = {};
+        const monthNames = ["GEN", "FEB", "MAR", "APR", "MAG", "GIU", "LUG", "AGO", "SET", "OTT", "NOV", "DIC"];
+        
+        filtered.forEach(t => {
+            let mYear = "Sconosciuto";
+            if (t.date) {
+                const parts = t.date.includes('/') ? t.date.split('/') : t.date.split('-');
+                if (parts.length >= 2) {
+                    const m = parseInt(t.date.includes('/') ? parts[1] : parts[1], 10) - 1;
+                    const y = t.date.includes('/') ? parts[2] : parts[0];
+                    if (m >= 0 && m <= 11) mYear = `${monthNames[m]} - ${y}`;
+                }
+            }
+            if (!grouped[mYear]) grouped[mYear] = [];
+            grouped[mYear].push(t);
+        });
+
+        let txHtml = '';
+        for (const [mYear, txGroup] of Object.entries(grouped)) {
+            txHtml += `<h3 class="title-md" style="margin-top: 0.5rem; margin-bottom: 0.5rem; color: var(--md-sys-color-on-surface-variant);">${mYear}</h3>`;
+            txHtml += `<div style="display: flex; flex-direction: column; gap: 0.5rem;">`;
+            txGroup.forEach(t => {
+                txHtml += renderTransactionRow(t);
+            });
+            txHtml += `</div>`;
         }
 
         resultsContainer.innerHTML = txHtml;
@@ -185,6 +236,8 @@ async function renderTransactions() {
         debounceTimer = setTimeout(applyFilters, 300);
     });
     document.getElementById('filter-type').addEventListener('change', applyFilters);
+    document.getElementById('filter-date-from').addEventListener('change', applyFilters);
+    document.getElementById('filter-date-to').addEventListener('change', applyFilters);
 }
 
 export function renderTransactionRow(tx) {
@@ -201,7 +254,7 @@ export function renderTransactionRow(tx) {
     ` : '';
 
     return `
-        <div class="filled-card" style="display: flex; justify-content: space-between; align-items: center; padding: 1rem;">
+        <div class="filled-card" onclick="if(window.editTransactionUI) window.editTransactionUI(${tx.id})" style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; cursor: pointer; transition: background 0.2s;">
             <div style="display: flex; align-items: center; gap: 1rem;">
                 <div style="background: var(--md-sys-color-surface-container-highest); padding: 8px; border-radius: 50%; display:flex; align-items:center; justify-content:center; color: var(--md-sys-color-on-surface-variant);">
                     <span class="material-symbols-outlined">${icon}</span>
@@ -246,6 +299,16 @@ window.deleteAccountUI = async (id) => {
 window.editAccountUI = (id) => {
     const acc = getAccountById(id);
     if(acc) openAccountModal(acc);
+};
+
+window.editTransactionUI = (id) => {
+    import('./components/transaction-sheet.js').then(module => {
+        const txs = getTransactions();
+        const tx = txs.find(t => t.id === id);
+        if (tx) {
+            module.openTransactionSheet(tx);
+        }
+    });
 };
 
 
@@ -527,8 +590,9 @@ export async function init() {
     loadView('dashboard');
 }
 
-function openAccountModal(targetAcc = null) {
+function openAccountModal(targetAcc = null, initialType = 'account') {
     const isEdit = !!targetAcc;
+    const defaultType = isEdit ? targetAcc.type : initialType;
     const modal = document.createElement('div');
     modal.className = 'bottom-sheet-overlay';
     modal.innerHTML = `
@@ -547,11 +611,11 @@ function openAccountModal(targetAcc = null) {
                 <div class="input-group">
                     <label class="label-large">Tipo</label>
                     <select id="new-acc-type" class="input-field">
-                        <option value="account" ${isEdit && targetAcc.type === 'account' ? 'selected' : ''}>Conto / Carta standard</option>
-                        <option value="savings_fund" ${isEdit && targetAcc.type === 'savings_fund' ? 'selected' : ''}>Salvadanaio (Risparmi con obiettivo)</option>
+                        <option value="account" ${defaultType === 'account' ? 'selected' : ''}>Conto / Carta standard</option>
+                        <option value="savings_fund" ${defaultType === 'savings_fund' ? 'selected' : ''}>Salvadanaio (Risparmi con obiettivo)</option>
                     </select>
                 </div>
-                <div id="goal-container" class="input-group" style="display: ${isEdit && targetAcc.type === 'savings_fund' ? 'flex' : 'none'};">
+                <div id="goal-container" class="input-group" style="display: ${defaultType === 'savings_fund' ? 'flex' : 'none'};">
                     <label class="label-large">Obbiettivo Economico (€)</label>
                     <input type="number" id="new-acc-goal" class="input-field" placeholder="Quanto vuoi risparmiare?" value="${isEdit ? (targetAcc.goal_amount || '') : ''}">
                 </div>
